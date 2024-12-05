@@ -1,0 +1,345 @@
+---
+title: "5301_NYPD Shooting Incident Data Report"
+author: "Junli"
+date: "2024-11-17"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Introduction
+
+This report explores the NYC Shooting Incidents dataset. It includes steps to tidy and transform the data, visualize key findings, and analyze potential biases. By addressing dataset and personal biases, this project aims to contribute to a nuanced understanding of crime trends.
+
+# Install and Import library
+
+**Note**: Before running this R Markdown document, ensure the following packages are installed: `lubridate`, `ggplot2`, `tidyverse`, `caret`, `Metrics`, `forecast`. 
+
+```{r importlib,error=TRUE}
+# Load libraries
+library(stringr)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(caret)
+library(Metrics)
+library(forecast)
+```
+
+# Tidy and Transform Your Data
+
+## Data Description
+
+This data shows every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence.
+
+The following table provides a detailed overview of the fields available in the dataset used for this analysis. Each field represents specific information about gun violence incidents in New York City, including spatial, temporal, and demographic details.
+
+| No. | Field Name              | Description                                                                              |
+|-----|-------------------------|------------------------------------------------------------------------------------------|
+| 1   | INCIDENT_KEY            | A unique identifier for each incident.                                                   |
+| 2   | OCCUR_DATE              | The date when the shooting incident occurred.                                            |
+| 3   | OCCUR_TIME              | The time when the shooting incident occurred.                                            |
+| 4   | BORO                    | The borough where the incident occurred (e.g., Brooklyn, Manhattan, Queens, etc.).       |
+| 5   | LOC_OF_OCCUR_DESC       | A description of whether the incident occurred inside or outside.                        |
+| 6   | PRECINCT                | The precinct number where the incident occurred.                                         |
+| 7   | JURISDICTION_CODE       | The jurisdiction code.                                                                   |
+| 8   | LOC_CLASSFCTN_DESC      | A classification of the location type, such as "Street" or "Commercial".                 |
+| 9   | LOCATION_DESC           | A description of the location where the incident occurred, such as a street or building. |
+| 10  | STATISTICAL_MURDER_FLAG | Indicates whether the incident was a murder (usually a boolean value).                   |
+| 11  | PERP_AGE_GROUP          | The age group of the perpetrator.                                                        |
+| 12  | PERP_SEX                | The gender of the perpetrator.                                                           |
+| 13  | PERP_RACE               | The race of the perpetrator.                                                             |
+| 14  | VIC_AGE_GROUP           | The age group of the victim.                                                             |
+| 15  | VIC_SEX                 | The gender of the victim.                                                                |
+| 16  | VIC_RACE                | The race of the victim.                                                                  |
+| 17  | X_COORD_CD              | The X-coordinate of the incident location in a spatial grid.                             |
+| 18  | Y_COORD_CD              | The Y-coordinate of the incident location in a spatial grid.                             |
+| 19  | Latitude                | The latitude of the incident location.                                                   |
+| 20  | Longitude               | The longitude of the incident location.                                                  |
+| 21  | Lon_Lat                 | The latitude and longitude as a single point, formatted as "POINT (Lon Lat)".            |
+
+## Load and Inspect the Dataset
+
+The dataset is loaded to inspect its structure, variables, and identify the data cleaning requirements.
+
+```{r loadshootdata}
+# Load the dataset
+shoot_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv")
+
+# Inspect the first few rows
+head(shoot_data)
+
+# Initial summary of the dataset
+summary(shoot_data)
+## 
+```
+
+## Data Cleaning
+
+This step converts variables into appropriate types (e.g., dates, factors) for better analysis. Unnecessary columns, such as redundant location details, are removed to simplify the dataset.
+
+```{r tidy-data}
+# Tidy and transform data
+shoot_data <- shoot_data %>%
+  mutate(
+    OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y"),
+    OCCUR_TIME = strptime(OCCUR_TIME, format = "%H:%M:%S"),
+    BORO = as.factor(BORO),
+    LOC_OF_OCCUR_DESC = as.factor(LOC_OF_OCCUR_DESC),
+    PERP_SEX = as.factor(PERP_SEX),
+    PERP_RACE = as.factor(PERP_RACE),
+    VIC_SEX = as.factor(VIC_SEX),
+    VIC_RACE = as.factor(VIC_RACE),
+    STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG)
+  ) %>%
+  select(-c(JURISDICTION_CODE, LOC_CLASSFCTN_DESC, Lon_Lat))  # Drop unnecessary columns
+```
+
+## Missing Data Analysis
+
+```{r checkmissingdata}
+# Check for missing data
+missing_summary <- colSums(is.na(shoot_data))
+
+# Display columns with missing data
+missing_summary[missing_summary > 0]
+```
+
+-   **LOC_OF_OCCUR_DESC** and **LOCATION_DESC**: These location descriptors are important for categorical analysis. Missing values should be replaced with "Not Specified" to maintain consistency.
+-   **PERP_AGE_GROUP** and **PERP_SEX** and **PERP_RACE**: These demographic details of perpetrators are critical for analysis. Missing values should be replaced with "Unknown."
+-   **Latitude** and **Longitude**: These coordinates are essential for spatial analysis. Rows with missing values should be excluded to ensure accuracy in such tasks.
+
+```{r handlemissingvalues}
+# Handle missing values
+# Convert factors to character, replace NA, and then back to factor
+shoot_data <- shoot_data %>%
+  mutate(
+    LOC_OF_OCCUR_DESC = factor(replace_na(as.character(LOC_OF_OCCUR_DESC), "Not Specified")),
+    LOCATION_DESC = factor(replace_na(as.character(LOCATION_DESC), "Not Specified")),
+    PERP_AGE_GROUP = factor(replace_na(as.character(PERP_AGE_GROUP), "Unknown")),
+    PERP_SEX = factor(replace_na(as.character(PERP_SEX), "Unknown")),
+    PERP_RACE = factor(replace_na(as.character(PERP_RACE), "Unknown"))
+  )
+
+# Filter out rows with missing Latitude and Longitude for geospatial analysis
+shoot_data_geo <- shoot_data %>%
+  filter(!is.na(Latitude) & !is.na(Longitude))
+```
+
+## Final Summary
+
+```{r finalsummary }
+# Summarize missing data after handling
+missing_summary_cleaned <- colSums(is.na(shoot_data_geo))
+missing_summary_cleaned
+```
+
+Missing values are replaced with placeholders to ensure consistency and clarity in the data.
+
+# Add Visualizations and Analysis
+
+## Visualization 1: Shootings by Borough
+
+A bar chart to display the number of incidents per borough. This chart shows which boroughs have the most incidents, helping focus on specific areas.
+
+```{r ShootingsbyBorough}
+ggplot(shoot_data_geo, aes(x = BORO)) +
+  geom_bar(fill = "blue") +
+  labs(
+    title = "Number of Shooting Incidents by Borough",
+    x = "Borough",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+## Visualization 2:Yearly/Monthly Shooting Incident Trends
+
+A line chart to analyze shooting incidents over time.
+
+This chart reveals whether incidents are increasing or decreasing over the years.
+
+```{r }
+shoot_data_geo %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  group_by(year, BORO) %>%
+  summarise(count = n(), .groups = "drop") %>%  # Group by year and borough, then summarize
+  ggplot(aes(x = year, y = count, color = BORO, group = BORO)) +  # Color and group by borough
+  geom_line(size = 1) +  # Add lines for each borough
+  labs(
+    title = "Yearly Trends in Shooting Incidents by Borough",
+    x = "Year",
+    y = "Number of Incidents",
+    color = "Borough"
+  ) +
+  theme_minimal()
+```
+
+Brooklyn and the Bronx consistently experience the highest shooting incidents with notable spikes during societal disruptions like 2020, while Manhattan, Queens, and Staten Island show relatively stable and lower trends.
+
+This visualization will show the average number of incidents for each month, aggregated across all years.
+
+```{r }
+shoot_data_geo %>%
+  mutate(month = month(OCCUR_DATE, label = TRUE, abbr = TRUE)) %>%
+  group_by(month, BORO) %>%
+  summarise(count = n(), .groups = "drop") %>%  # Group by month and borough, then summarize
+  ggplot(aes(x = month, y = count, color = BORO, group = BORO)) +  # Color and group by borough
+  geom_line(size = 1) +  # Add lines for each borough
+  labs(
+    title = "Monthly Trends in Shooting Incidents by Borough",
+    x = "Month",
+    y = "Number of Incidents",
+    color = "Borough"
+  ) +
+  theme_minimal()
+```
+
+Shooting incidents tend to occur more frequently during late-night hours and in warmer months.
+
+## Visualization 3:Shooting Incidents by Time of Day
+
+A histogram showing the distribution of shooting incidents by hour. Identify when most shootings occur (e.g., late-night hours).
+
+```{r TimeofDay}
+shoot_data_geo %>%
+  mutate(hour = hour(OCCUR_TIME)) %>%
+  ggplot(aes(x = hour)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
+  labs(
+    title = "Shooting Incidents by Time of Day",
+    x = "Hour of Day",
+    y = "Number of Incidents"
+  ) +
+  theme_minimal()
+```
+
+Shooting incidents are most frequent during late-night hours (midnight to 2 AM) and evening hours (8 PM to 10 PM), with a significant drop during early morning and midday hours.
+
+## modeling data
+
+-   Aggregate Data by Year
+
+Group the dataset by year and borough to count the total number of incidents for each year and borough.
+
+```{r}
+shoot_data_yearly <- shoot_data_geo %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  group_by(year, BORO) %>%  # Group by year and borough
+  summarise(count = n(), .groups = "drop")
+```
+
+-   Regression Model
+
+A regression model predicts the yearly number of incidents based on time (year) and borough(BORO). This can help identify trends (e.g., increasing, decreasing).
+
+```{r}
+# Split the data into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(shoot_data_yearly$count, p = 0.8, list = FALSE)
+train_data <- shoot_data_yearly[train_index, ]
+test_data <- shoot_data_yearly[-train_index, ]
+
+# Add Borough to the regression model
+lm_model <- lm(count ~ year + BORO, data = train_data)
+
+# Model summary
+summary(lm_model)
+
+# Predict on the test set
+test_data$predicted <- predict(lm_model, newdata = test_data)
+
+# Evaluate the model
+library(Metrics)
+rmse_value <- rmse(test_data$count, test_data$predicted)
+cat("RMSE:", rmse_value, "\n")
+
+# Plot observed vs predicted
+ggplot(test_data, aes(x = count, y = predicted, color = BORO)) +  # Add color for Borough
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(
+    title = "Observed vs Predicted Shooting Incidents (Yearly by Borough)",
+    x = "Observed",
+    y = "Predicted"
+  ) +
+  theme_minimal()
+```
+
+This scatterplot shows the Observed vs. Predicted Shooting Incidents (Yearly by Borough), where each borough is color-coded. The red diagonal line represents perfect predictions (where observed values equal predicted values).
+
+This visualization highlights that while the model generally performs well for low and moderate incident boroughs (e.g., Staten Island, Manhattan), it underperforms for boroughs with high incident counts like the Bronx and Brooklyn. This points to the need for borough-specific modeling strategies and additional features to improve accuracy.
+
+## Potential questions based on the visualizations
+
+The visualizations and analyses suggested several additional questions that could be investigated to gain deeper insights into the data.
+
+-   Why are certain boroughs (e.g., Brooklyn and Bronx) experiencing higher shooting incidents?
+
+-   Why did Brooklyn and Bronx see significant peaks around 2020--2021?
+
+Was this related to broader societal trends like the COVID-19 pandemic, economic challenges, or reduced law enforcement activity during that time?
+
+-   Why do incidents occur more frequently during certain hours of the day?
+
+For example, if late-night hours show spikes, is this related to nightlife, gang activity, or other factors?
+
+These questions that I should investigate more.
+
+# Conclusion
+
+This analysis explored shooting incidents in New York City from 2006 to 2023, focusing on trends by borough, time. Key findings include:
+
+1.  Borough Trends:
+
+-   Brooklyn and the Bronx consistently experience the highest number of incidents, with notable peaks around 2020--2021, possibly linked to societal disruptions like the COVID-19 pandemic and its economic impact.
+
+-   Manhattan and Staten Island consistently report the lowest numbers, reflecting potential differences in population density, socioeconomic factors, or law enforcement focus.
+
+2.  Temporal Patterns:
+
+-   Shooting incidents tend to occur more frequently during late-night hours and in warmer months, suggesting environmental and behavioral factors influence these patterns.
+
+-   Overall, shooting incidents have declined in recent years, likely due to interventions such as stricter gun control policies or improved community outreach.
+
+## Sources of Bias
+
+**Dataset Bias**
+
+-   Location Bias:
+
+Certain neighborhoods might be over-policed, leading to a higher likelihood of reported incidents compared to less patrolled areas.
+
+-   Temporal Inconsistencies:
+
+Variations in how incidents were recorded or categorized over the years may influence the accuracy of year-to-year comparisons.
+
+**Personal Bias**
+
+-   Preconceived Assumptions:
+
+Personal expectations about crime being higher in specific boroughs (e.g., Bronx and Brooklyn) might have influenced the focus of the analysis.
+
+## Mitigation Efforts
+
+To mitigate these biases:
+
+-   Data-Driven Approach:
+
+The analysis relied on visualizations and statistical summaries to guide conclusions rather than preconceptions.
+
+-   Handling Missing Data:
+
+Missing values were addressed systematically, replacing them with meaningful placeholders (e.g., "Unknown") to ensure consistency while acknowledging limitations.
+
+-   Exploration Across Dimensions:
+
+Trends were explored across multiple dimensions (e.g., borough, time) to avoid overgeneralizing findings from a single perspective.
+
+
+By leveraging a structured approach to data analysis and visualization, this report provides actionable insights into NYC shooting incidents, highlighting the importance of borough-specific strategies and temporal considerations in addressing gun violence effectively.
